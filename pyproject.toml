@@ -1,0 +1,35 @@
+[project]
+name = "hhu-campusnetwork-autologin"
+version = "0.1.0"
+description = "Automates login to the HHU campus network portal."
+readme = "AGENTS.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Krual", email = "tsk2455014103@outlook.com" }
+]
+dependencies = [
+  "python-dotenv>=1.0",
+  "selenium",
+  "webdriver-manager"
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "requests-mock>=1.12"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "requests-mock>=1.12"
+]
+
+[tool.uv]
+managed = true
+package = true
+default-groups = ["dev"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

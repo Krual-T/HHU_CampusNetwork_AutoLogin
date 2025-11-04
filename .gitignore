@@ -1,0 +1,9 @@
+*
+!.env.example
+!.gitignore
+!pyproject.toml
+!src/
+!src/**/*
+!chromedriver.exe
+
+__pycache__
