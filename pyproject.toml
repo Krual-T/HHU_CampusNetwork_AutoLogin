@@ -5,12 +5,12 @@ description = "Automates login to the HHU campus network portal."
 readme = "AGENTS.md"
 requires-python = ">=3.11"
 authors = [
-  { name = "Krual", email = "tsk2455014103@outlook.com" }
+  { name = "Krual", email = "shaokun.tang@outlook.com" }
 ]
 dependencies = [
   "python-dotenv>=1.0",
-  "selenium",
-  "webdriver-manager"
+  "requests",
+  "pyinstaller"
 ]
 
 [dependency-groups]

@@ -4,6 +4,7 @@
 !pyproject.toml
 !src/
 !src/**/*
-!chromedriver.exe
+!installer.nsi
+!README.md
 
 __pycache__
