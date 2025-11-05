@@ -1,38 +1,66 @@
 ; ---------------------------------
-; HohaiAutoLogin Installer Script (V2)
-; (Includes custom page for user credentials)
+; HohaiAutoLogin Installer Script (V2.1 - Beautified)
 ; ---------------------------------
 
 ; --- 1. Basic Information ---
 !define APP_NAME "HohaiAutoLogin"
-!define APP_VERSION "1.1" ; (Version bump)
+!define APP_VERSION "v1.2.0"
 !define EXE_NAME "HohaiAutoLogin.exe"
-!define ENV_TEMPLATE_NAME ".env.example" ; (Use template)
-!define ENV_CONFIG_NAME ".env"         ; (Create actual config)
+!define AutoTaskScript "create_task.ps1"
+!define ENV_TEMPLATE_NAME ".env.example"
+!define ENV_CONFIG_NAME ".env"
+!define NETWORK_NAME "Hohai University" 
 
 Name "${APP_NAME} ${APP_VERSION}"
-OutFile "HohaiAutoLogin_Setup.exe"
+OutFile "HohaiAutoLogin_${APP_VERSION}_Setup.exe"
 InstallDir "$PROGRAMFILES64\${APP_NAME}"
 RequestExecutionLevel admin
 
-; --- 2. Interface and Pages ---
+; --- 2. Includes ---
+!pragma warning disable 6001 ; Disable "mui.Header.Text not used" warning
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
 !include "nsDialogs.nsh"
 
-; Define variables to store user input
+; --- 3. Interface Settings (Beautification) ---
+
+; --- Set Installer Icons ---
+; (Uses modern built-in icons. Replace with your own .ico files if you have them)
+!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+
+; --- Set Header Image ---
+; (Uses built-in header. Replace with your own .bmp file if you have one)
+; [!!] We are commenting these lines out because the .bmp file is optional and may not exist on your system [!!]
+; !define MUI_HEADERIMAGE
+; !define MUI_HEADERIMAGE_BITMAP "${NSISDIR}\Contrib\Graphics\Header\modern.bmp"
+; !define MUI_HEADERIMAGE_RIGHT ; (Align to the right)
+
+; --- Welcome Page ---
+!insertmacro MUI_PAGE_WELCOME
+
+; --- Pages (from your script) ---
+!insertmacro MUI_PAGE_DIRECTORY
+Page custom CustomPageCreate CustomPageLeave ; (This is our new page)
+!insertmacro MUI_PAGE_COMPONENTS
+!insertmacro MUI_PAGE_INSTFILES
+
+; --- Finish Page ---
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${EXE_NAME}" ; Add "Run..." checkbox
+!insertmacro MUI_PAGE_FINISH
+
+; --- Uninstaller Pages ---
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+; --- Language ---
+!insertmacro MUI_LANGUAGE "English"
+
+; --- 4. Variables ---
 Var USERNAME
 Var PASSWORD
 
-; Define page order
-Page directory    
-Page custom CustomPageCreate CustomPageLeave ; (This is our new page)
-Page components   
-Page instfiles    
-
-UninstPage uninstConfirm 
-UninstPage instfiles      
-
-; --- 3. Custom Page for Credentials ---
+; --- 5. Custom Page for Credentials ---
 
 Function CustomPageCreate
     ; This function creates the custom page
@@ -79,114 +107,125 @@ EndValidation:
     ; (Validation passed)
 FunctionEnd
 
+; --- 6. Auto-Uninstall Function ---
+Function .onInit
+    ClearErrors
+    
+    ReadRegStr $R0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString"
+    
+    IfErrors Done
+    
+    MessageBox MB_YESNO|MB_ICONQUESTION \
+        "${APP_NAME} is already installed.$\n$\nDo you want to uninstall the previous version and reinstall?" \
+        IDYES RunUninstaller
 
-; --- 4. Sections (Components) ---
+    Abort
+    
+RunUninstaller:
+    ExecWait '"$R0" /S _?=$INSTDIR'
+    
+Done:
+FunctionEnd
+
+; --- 7. Sections (Components) ---
 
 Section "Main Application (Required)" SEC_APP
     SectionIn RO 
     SetOutPath $INSTDIR
     
     ; --- A. Install files ---
-    ; 1. Install the .exe
     File "dist\${EXE_NAME}"
-    ; 2. Install the template (we'll rename/modify it next)
     File "${ENV_TEMPLATE_NAME}"
     
     ; --- B. Create .env from template and user input ---
-    
-    ; Rename .env.example to .env
     Rename "$INSTDIR\${ENV_TEMPLATE_NAME}" "$INSTDIR\${ENV_CONFIG_NAME}"
     
-    ; Read the new .env file, replace the placeholder username, and write it back
-    ; $USERNAME and $PASSWORD vars hold what the user typed on the custom page
-    
-    ; Replace username placeholder
-    nsExec::ExecToStack 'powershell -Command "(Get-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\") -replace \"your_username_goes_here\", \"$USERNAME\" | Set-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\""'    
+    nsExec::ExecToStack 'powershell -Command "(Get-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\") -replace \"your_username_goes_here\", \"$USERNAME\" | Set-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\""'     
 
-    ; Replace password placeholder
     nsExec::ExecToStack 'powershell -Command "(Get-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\") -replace \"your_password_goes_here\", \"$PASSWORD\" | Set-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\""'
 
     ; --- C. Create Uninstaller and Registry ---
     WriteUninstaller "$INSTDIR\uninstall.exe"
     
-    ; --- Add/Remove Programs Registry ---
-    ; Creates an entry so the app appears in "Add or remove programs"
-    
-    ; This is the main name shown
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
-                   "DisplayName" "${APP_NAME} (Auto Login)"
-                   
-    ; This is the path to the uninstaller
+                 "DisplayName" "${APP_NAME} (Auto Login)"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
-                   "UninstallString" "$INSTDIR\uninstall.exe"
-                   
-    ; This is the version number
+                 "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
-                   "DisplayVersion" "${APP_VERSION}"
-                   
-    ; This is the application icon
+                 "DisplayVersion" "${APP_VERSION}"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
-                   "DisplayIcon" "$INSTDIR\${EXE_NAME}"
-
-    ; --- [!!] NEW: Author Information [!!] ---
-    
-    ; This sets the "Publisher" field
+                 "DisplayIcon" "$INSTDIR\${EXE_NAME}"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
-                   "Publisher" "Krual" ;
-                   
-    ; This creates a support link (we use "mailto:" for email)
+                 "Publisher" "Krual"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
-                   "URLInfoAbout" "https://github.com/Krual-T" ;
-
-    ; (This is an optional field for direct email display)
+                 "URLInfoAbout" "https://github.com/Krual-T"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
-                   "Contact" "shaokun.tang@outlook.com" ;
+                 "Contact" "shaokun.tang@outlook.com"
     
 SectionEnd
 
 Section "Run automatically on network connection" SEC_AUTORUN
+    SetOutPath $INSTDIR
+    
+    File "${AutoTaskScript}"
+    IfErrors PSScriptError
 
-    GetFullPathName /SHORT $R1 "$PROGRAMFILES64" 
-
-    StrCpy $R2 "$R1\${APP_NAME}\${EXE_NAME}"
-
-    StrCpy $0 `powershell -ExecutionPolicy Bypass -NonInteractive -Command "schtasks /Create /TN \"${APP_NAME}\" /TR \"$R2\" /SC ONEVENT /EC Microsoft-Windows-NetworkProfile/Operational /MO '*[System[Provider[@Name=''Microsoft-Windows-NetworkProfile''] and EventID=10000]]' /RL HIGHEST /F"`
+    ; --- [!!] FINAL BUG FIX: Added nested quotes to -ExePath [!!] ---
+    ; Both -File and -ExePath now correctly handle spaces in $INSTDIR
+    StrCpy $0 `powershell -ExecutionPolicy Bypass -NonInteractive -File "$INSTDIR\${AutoTaskScript}" -TaskName "${APP_NAME}" -ExePath '"$INSTDIR\${EXE_NAME}"' -NetworkName "${NETWORK_NAME}"`
 
     nsExec::ExecToStack $0
     
-    Pop $R1
-    Pop $R0
-    
-    StrCmp $R0 0 ExecutionSuccess 
+    ; (This is the correct Pop order)
+    Pop $R1 ; 1. Exit Code
+    Pop $R0 ; 2. Output Text
 
-    MessageBox MB_OK|MB_ICONEXCLAMATION "msg: $R0\nPowerShell output:\n$R1"
+    ; Delete the script after execution
+    Delete "$INSTDIR\${AutoTaskScript}"
+    
+    StrCmp $R1 0 ExecutionSuccess 
+
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Failed to create scheduled task!$\n$\nExit Code: $R1$\n$\nPowerShell Error:$\n$R0"
+    goto EndSectionLabel 
+
+PSScriptError:
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Runtime Error: Could not extract ${AutoTaskScript} to $INSTDIR."
     goto EndSectionLabel 
 
 ExecutionSuccess:
-    ; 任务创建成功
     
 EndSectionLabel: 
     
 SectionEnd
 
-; --- 5. Post-Installation Function ---
+; --- 8. Section Descriptions (Beautification) ---
+; This adds descriptions to the Components page
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+    !insertmacro MUI_DESCRIPTION_TEXT ${SEC_APP} "Installs the main application, configuration file, and uninstaller."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SEC_AUTORUN} "Creates a Windows Scheduled Task to run the application automatically when you connect to the '${NETWORK_NAME}' network."
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
+
+; --- 9. Post-Installation Function ---
 Function .onInstSuccess
-    ; We no longer need the old pop-up message
-    ; The user has already entered their info.
-    ; We can show a simpler success message.
-    MessageBox MB_OK|MB_ICONINFORMATION \
-    "$\r$\n$\r$\n${APP_NAME} has been installed! $\r$\n(If you select $\`Run automatically$\`, it will take effect the next time you connect to the network.)"
 FunctionEnd
 
-; --- 6. Uninstaller Section ---
+; --- 10. Uninstaller Section ---
 Section "Uninstall"
     
+    ; 1. Remove Scheduled Task
     nsExec::Exec 'powershell -Command "schtasks /Delete /TN \"${APP_NAME}\" /F"'
     Pop $0
     
+    ; 2. Delete files
+    Delete "$INSTDIR\${AutoTaskScript}"  ; (Also delete the .ps1 file just in case)
     Delete "$INSTDIR\${EXE_NAME}"
-    Delete "$INSTDIR\${ENV_CONFIG_NAME}" ; (Delete .env)
+    Delete "$INSTDIR\${ENV_CONFIG_NAME}"
     Delete "$INSTDIR\uninstall.exe"
+    
+    ; 3. Delete directory
     RMDir $INSTDIR
+    
+    ; 4. Remove registry keys
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 SectionEnd

@@ -6,5 +6,5 @@
 !src/**/*
 !installer.nsi
 !README.md
-
+!create_task.ps1
 __pycache__
