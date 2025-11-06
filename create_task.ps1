@@ -14,11 +14,8 @@ try {
     $trigger = $class | New-CimInstance -ClientOnly
     $trigger.Enabled = $True
     $trigger.Subscription = '<QueryList><Query Id="0" Path="Microsoft-Windows-NetworkProfile/Operational"><Select Path="Microsoft-Windows-NetworkProfile/Operational">*[System[Provider[@Name=''Microsoft-Windows-NetworkProfile''] and EventID=10000]]</Select></Query></QueryList>'
-
-    $settings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable -NetworkName $NetworkName  -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries -WakeToRun
-
-    $principal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-544" -RunLevel Highest
-
+    $principal = New-ScheduledTaskPrincipal -UserID "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable -NetworkName $NetworkName  -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries -WakeToRun -MultipleInstances Parallel
     $definition = New-ScheduledTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal
 
     Register-ScheduledTask -TaskName $TaskName -InputObject $definition -Force

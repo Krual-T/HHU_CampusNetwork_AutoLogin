@@ -4,7 +4,7 @@
 
 ; --- 1. Basic Information ---
 !define APP_NAME "HohaiAutoLogin"
-!define APP_VERSION "v1.2.0"
+!define APP_VERSION "v1.3.0"
 !define EXE_NAME "HohaiAutoLogin.exe"
 !define AutoTaskScript "create_task.ps1"
 !define ENV_TEMPLATE_NAME ".env.example"
