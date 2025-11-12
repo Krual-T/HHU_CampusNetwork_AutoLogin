@@ -45,7 +45,15 @@ PORTAL_USERNAME=your_username_was_saved_here
 # Broadband Password
 PORTAL_PASSWORD=your_password_was_saved_here
 
-# (Optional) Service provider name (e.g., "中国移动(CMCC NET)")
+# (Optional) Service provider name
+## This value was obtained by reverse engineering the value of the relevant element (named net_access_type) in the official HTML source code.
+## As of November 9, 2025, only the following values ​​are available.
+## Optional values：
+##   1. 移动  ->SERVICE_NAME=中国移动(CMCC NET)
+##   2. 电信  ->SERVICE_NAME=中国电信(常州)
+##   3. 联通  ->SERVICE_NAME=中国联通(常州)
+##   4. 校园网->SERVICE_NAME=校园外网服务(out-campus NET)
+## e.g., if your service is 移动：SERVICE_NAME=中国移动(CMCC NET)
 SERVICE_NAME=中国移动(CMCC NET)
 
 # (Optional) Target Wi-Fi SSID
