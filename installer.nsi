@@ -1,10 +1,10 @@
-; ---------------------------------
+﻿; ---------------------------------
 ; HohaiAutoLogin Installer Script (V2.1 - Beautified)
 ; ---------------------------------
-
+Unicode true
 ; --- 1. Basic Information ---
 !define APP_NAME "HohaiAutoLogin"
-!define APP_VERSION "v1.3.0"
+!define APP_VERSION "v1.4.0"
 !define EXE_NAME "HohaiAutoLogin.exe"
 !define AutoTaskScript "create_task.ps1"
 !define ENV_TEMPLATE_NAME ".env.example"
@@ -59,7 +59,8 @@ Page custom CustomPageCreate CustomPageLeave ; (This is our new page)
 ; --- 4. Variables ---
 Var USERNAME
 Var PASSWORD
-
+Var SERVICE_DROPLIST        ; Handle for the dropdown list
+Var SERVICE_NAME            ; String to store the final service name
 ; --- 5. Custom Page for Credentials ---
 
 Function CustomPageCreate
@@ -83,6 +84,22 @@ Function CustomPageCreate
     ${NSD_CreatePassword} 0 75u 100% 12u ""
     Pop $PASSWORD ; (Store handle in $PASSWORD var)
 
+    ; --- Service name ---
+    ${NSD_CreateLabel} 0 100u 42% 8u "Select CampusNetwork Service name:"
+    Pop $1
+
+    ; Create the dropdown list (DropList style means user cannot type)
+    ${NSD_CreateDropList} 130u 98u 20% 12u ""
+    Pop $SERVICE_DROPLIST
+    
+    ; Add the options (Index 0, 1, 2, 3)
+    ${NSD_CB_AddString} $SERVICE_DROPLIST "中国移动"
+    ${NSD_CB_AddString} $SERVICE_DROPLIST "中国电信"
+    ${NSD_CB_AddString} $SERVICE_DROPLIST "中国联通"
+    ${NSD_CB_AddString} $SERVICE_DROPLIST "校园外网服务"
+    
+    ; Set default selection (index 0 for "中国移动")
+    SendMessage $SERVICE_DROPLIST ${CB_SETCURSEL} 0 0
     ; Show the page
     nsDialogs::Show
 FunctionEnd
@@ -97,6 +114,28 @@ Function CustomPageLeave
     ; (Simple Validation)
     StrCmp $USERNAME "" ShowError ; (Jump to ShowError if username is empty)
     StrCmp $PASSWORD "" ShowError ; (Jump to ShowError if password is empty)
+
+    SendMessage $SERVICE_DROPLIST ${CB_GETCURSEL} 0 0 $R0 ; $R0 will contain the selected index (0, 1, 2, or 3)
+    
+    ; Use LogicLib Switch/Case to map index to string
+    ${Switch} $R0
+        ${Case} 0 ; "中国移动"
+            StrCpy $SERVICE_NAME "中国移动(CMCC NET)"
+            ${Break}
+        ${Case} 1 ; "中国电信"
+            StrCpy $SERVICE_NAME "中国电信(常州)"
+            ${Break}
+        ${Case} 2 ; "中国联通"
+            StrCpy $SERVICE_NAME "中国联通(常州)"
+            ${Break}
+        ${Case} 3 ; "校园外网服务"
+            StrCpy $SERVICE_NAME "校园外网服务(out-campus NET)"
+            ${Break}
+        ${Default} ; Fallback (shouldn't happen, but good practice)
+            StrCpy $SERVICE_NAME "中国移动(CMCC NET)"
+            ${Break}
+    ${EndSwitch}
+
     goto EndValidation
 
 ShowError:
@@ -140,11 +179,7 @@ Section "Main Application (Required)" SEC_APP
     ; --- B. Create .env from template and user input ---
     Rename "$INSTDIR\${ENV_TEMPLATE_NAME}" "$INSTDIR\${ENV_CONFIG_NAME}"
     
-    nsExec::ExecToStack 'powershell -Command "(Get-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\") -replace \"your_username_goes_here\", \"$USERNAME\" | Set-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\""'     
-
-    nsExec::ExecToStack 'powershell -Command "(Get-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\") -replace \"your_password_goes_here\", \"$PASSWORD\" | Set-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\""'
-
-    ; --- C. Create Uninstaller and Registry ---
+    nsExec::ExecToStack 'powershell -Command "$$content = (Get-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\" -Encoding Utf8 -Raw); $$content = $$content.Replace(\"your_username_goes_here\", \"$USERNAME\").Replace(\"your_password_goes_here\", \"$PASSWORD\").Replace(\"your_service_name_goes_here\", \"$SERVICE_NAME\"); $$content | Set-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\" -Encoding Utf8"'    ; --- C. Create Uninstaller and Registry ---
     WriteUninstaller "$INSTDIR\uninstall.exe"
     
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
