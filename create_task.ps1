@@ -1,8 +1,7 @@
 # All code and comments should be in English.
 param (
     [string] $TaskName,
-    [string] $ExePath,
-    [string] $NetworkName
+    [string] $ExePath
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,9 +35,9 @@ try {
     # This is the key change: create an array holding both triggers
     $triggers = $eventTrigger, $unlockTrigger
 
-    # --- Principal and Settings (Unchanged) ---
+    # --- Principal and Settings ---
     $principal = New-ScheduledTaskPrincipal -UserID "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable -NetworkName $NetworkName  -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries -WakeToRun -MultipleInstances Parallel
+    $settings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries -WakeToRun -MultipleInstances Parallel
     
     # --- Create Definition (Using the trigger array) ---
     # Pass the $triggers array to the -Trigger parameter

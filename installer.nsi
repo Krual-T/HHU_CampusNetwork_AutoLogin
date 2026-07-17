@@ -4,12 +4,11 @@
 Unicode true
 ; --- 1. Basic Information ---
 !define APP_NAME "HohaiAutoLogin"
-!define APP_VERSION "v1.4.0"
+!define APP_VERSION "v1.4.1"
 !define EXE_NAME "HohaiAutoLogin.exe"
 !define AutoTaskScript "create_task.ps1"
 !define ENV_TEMPLATE_NAME ".env.example"
 !define ENV_CONFIG_NAME ".env"
-!define NETWORK_NAME "Hohai University" 
 
 Name "${APP_NAME} ${APP_VERSION}"
 OutFile "HohaiAutoLogin_${APP_VERSION}_Setup.exe"
@@ -207,7 +206,7 @@ Section "Run automatically on network connection" SEC_AUTORUN
 
     ; --- [!!] FINAL BUG FIX: Added nested quotes to -ExePath [!!] ---
     ; Both -File and -ExePath now correctly handle spaces in $INSTDIR
-    StrCpy $0 `powershell -ExecutionPolicy Bypass -NonInteractive -File "$INSTDIR\${AutoTaskScript}" -TaskName "${APP_NAME}" -ExePath '"$INSTDIR\${EXE_NAME}"' -NetworkName "${NETWORK_NAME}"`
+    StrCpy $0 `powershell -ExecutionPolicy Bypass -NonInteractive -File "$INSTDIR\${AutoTaskScript}" -TaskName "${APP_NAME}" -ExePath '"$INSTDIR\${EXE_NAME}"'`
 
     nsExec::ExecToStack $0
     
@@ -237,7 +236,7 @@ SectionEnd
 ; This adds descriptions to the Components page
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SEC_APP} "Installs the main application, configuration file, and uninstaller."
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC_AUTORUN} "Creates a Windows Scheduled Task to run the application automatically when you connect to the '${NETWORK_NAME}' network."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SEC_AUTORUN} "Creates a Windows Scheduled Task to run the application automatically after network connection events. The application checks the target SSID before logging in."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 
