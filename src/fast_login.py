@@ -1,239 +1,456 @@
+"""One bounded Windows captive-portal check, login, or own-session recovery."""
+
+import argparse
+import ctypes
+import html
+import json
+import math
 import os
-import sys
+import posixpath
 import re
-import requests
-import urllib.parse
-import time
 import subprocess
-from configs import DEBUG,TARGET_SSID,PORTAL_USERNAME,PORTAL_PASSWORD,SERVICE_NAME
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import parse_qs, quote, urlsplit
 
-def setup_debug_console():
-    """
-    If DEBUG=True and the script is run as a "windowless" .exe,
-    this function will force the creation of a console window to display the log_debug() output.
-    """
-    if DEBUG and getattr(sys, 'frozen', False):
-        try:
-            import ctypes
-            if ctypes.windll.kernel32.GetConsoleWindow() == 0:
-                if ctypes.windll.kernel32.AllocConsole() != 0:
-                    # 将 Python 的 stdout/stderr 重定向到这个新窗口 (UTF-8 编码以支持符号)
-                    sys.stdout = open('CONOUT$', 'w', encoding='utf-8')
-                    sys.stderr = open('CONOUT$', 'w', encoding='utf-8')
-                else:
-                    pass
-        except Exception:
-            pass
+import requests
 
-setup_debug_console()
+import configs
 
-# Headers to impersonate a Chrome browser for the GET request
-GET_HEADERS = {
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-}
-
-# Headers for the POST login request (mimicking AuthInterFace.js)
-POST_HEADERS = {
-    'Accept': 'application/json, text/javascript, */*; q=0.01', 
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' 
-}
-
-# We use the gateway IP to trigger the redirect "maze"
 CHECK_URL = "http://10.96.0.155"
-# The final login API endpoint
-LOGIN_URL = "http://eportal.hhu.edu.cn/eportal/InterFace.do?method=login"
+API_URL = "http://eportal.hhu.edu.cn/eportal/InterFace.do?method="
+PORTAL_HOSTS = {"10.96.0.155", "eportal.hhu.edu.cn"}
+GET_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xhtml+xml"}
+POST_HEADERS = {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
+ATTEMPTS = 3
+COOLDOWN_SECONDS = 300
 
 
-# --- 2. Helper Functions ---
-
-def log_debug(message: str):
-    """
-    [!!] 已美化 [!!]
-    Helper function to log messages only in DEBUG mode.
-    (已修复无限递归的BUG)
-    """
-    if DEBUG:
-        prefix = "ℹ️ "  # 默认: 信息
-        msg_lower = message.lower()
-        
-        # --- 状态关键词 (最高优先级) ---
-        if "success" in msg_lower or "🎉" in message or "already logged in" in msg_lower:
-            prefix = "✅ "
-        elif "fail" in msg_lower or "error" in msg_lower or "❌" in message or "not connected" in msg_lower or "is not" in msg_lower:
-            prefix = "❌ "
-            
-        # --- 动作关键词 (中优先级) ---
-        elif "attempt" in msg_lower or "sending" in msg_lower or "starting" in msg_lower or "preparing" in msg_lower or "visiting" in msg_lower:
-            prefix = "▶️ "
-        elif "parsing" in msg_lower or "detected" in msg_lower or "extracted" in msg_lower or "found" in msg_lower:
-            prefix = "🔍 "
-        elif "network" in msg_lower or "ssid" in msg_lower:
-            prefix = "🌐 "
-
-        # --- 特殊关键词 ---
-        elif "process finished" in msg_lower:
-            prefix = "🏁 "
-        elif "response" in msg_lower:
-            prefix = "💬 "
-
-        print(f"{prefix} {message}")
+def emit(status):
+    """Only fixed status codes reach logs; URLs, responses, and exceptions stay private."""
+    if sys.stdout is not None:
+        print(f"[HHU_LOGIN] {status}")
 
 
-def get_current_ssid() -> str | None:
-    """
-    Uses netsh to get the current Wi-Fi SSID.
-    (Fixed encoding issues for Windows)
-    """
-    try:
-        # Run netsh command, capture raw bytes
-        output = subprocess.run(
-            ['netsh', 'wlan', 'show', 'interfaces'],
-            capture_output=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        # Decode using 'gbk' (common for Chinese Windows) with error replacement
-        stdout_str = output.stdout.decode('gbk', errors='replace')
-        
-        match = re.search(r"SSID\s+:\s+(.+)\r", stdout_str)
-        if match:
-            ssid = match.group(1).strip()
-            log_debug(f"Detected current SSID: {ssid}")
-            return ssid
-        else:
-            log_debug("No active Wi-Fi connection detected.")
-            return None
-    except Exception as e:
-        log_debug(f"Error getting SSID: {e}")
-        return None
+def normalize_mac(value):
+    value = str(value).replace(":", "").replace("-", "").lower()
+    return value if re.fullmatch(r"[0-9a-f]{12}", value) else ""
 
-# --- 3. Main Login Function ---
 
-def do_login():
-    """Executes the full login process."""
-    
-    # Step 1: Check Network Name
-    current_ssid = get_current_ssid()
-    if current_ssid != TARGET_SSID:
-        # This is a final status, so it always prints.
-        log_debug(f"Current network is not '{TARGET_SSID}' (it's {current_ssid}). Skipping login.")
-        return
+@dataclass(frozen=True)
+class WifiIdentity:
+    name: str
+    ssid: str
+    mac: str
 
-    log_debug(f"Connected to target network: {TARGET_SSID}. Starting login...")
-    
-    session = requests.Session()
-    session.headers.update(GET_HEADERS) # Set default headers for the session
 
-    # Step 2: Get dynamic parameters (with retry logic)
-    landing_page_html = None 
-    
-    for attempt in range(1, 4): # Max 3 attempts
-        log_debug(f"  Attempt {attempt} to get dynamic parameters (visiting {CHECK_URL})...")
-        try:
-            r = session.get(CHECK_URL, timeout=5, allow_redirects=True)
-            
-            # Check if we are already logged in
-            if "success" in r.url:
-                log_debug("Already logged in. No action needed.")
-                return 
+def parse_wifi_interfaces(text):
+    """Keep interface blocks together so multiple adapters cannot mix identities."""
+    interfaces = []
+    current = {}
+    labels = {"name": "name", "名称": "name", "physical address": "mac", "物理地址": "mac"}
+    for line in text.splitlines():
+        match = re.match(r"^\s*([^:]+?)\s*:\s*(.*?)\s*$", line)
+        if not match:
+            continue
+        label, value = match.groups()
+        key = labels.get(label.lower(), "ssid" if label.upper() == "SSID" else None)
+        if key == "name":
+            if current:
+                interfaces.append(current)
+            current = {"name": value}
+        elif key and current:
+            current[key] = value
+    if current:
+        interfaces.append(current)
+    return [
+        WifiIdentity(item["name"], item["ssid"], normalize_mac(item.get("mac", "")))
+        for item in interfaces
+        if item.get("ssid") and normalize_mac(item.get("mac", ""))
+    ]
 
-            # Check if we landed on the "JS Jump Pad" page
-            if "123.123.123.123" in r.url:
-                log_debug(f"  Successfully landed on 'JS Jump Pad' page: {r.url}")
-                landing_page_html = r.text 
-                break # Success, exit the loop
-            else:
-                log_debug(f"  Did not redirect to 'JS Jump Pad' page. Current URL: {r.url}")
-        
-        except requests.exceptions.RequestException as e:
-            log_debug(f"  Attempt {attempt} network connection failed: {e}")
-        
-        if attempt < 3:
-            log_debug("  Retrying in 2 seconds...")
-            time.sleep(2)
-    
-    # Check if the loop failed
-    if landing_page_html is None:
-        log_debug("❌ Login Failed: Could not get 'JS Jump Pad' page after 3 attempts. Exiting.")
-        return
 
-    # Step 3: Parse the "Golden Ticket" (the JS redirect)
-    log_debug("  Parsing 'JS Jump Pad' to get index.jsp URL...")
-    match = re.search(r"top\.self\.location\.href='(http.*?index\.jsp\?.*?)'", landing_page_html)
-    
-    if not match:
-        log_debug("❌ Login Failed: Could not extract index.jsp URL from 'JS Jump Pad' source. Exiting.")
-        return
-    
-    final_login_url = match.group(1)
-    log_debug(f"  Successfully extracted 'Golden Ticket' URL: {final_login_url[:50]}...")
-    
-    parsed_url = urllib.parse.urlparse(final_login_url)
-    query_string = parsed_url.query 
-    log_debug(f"  Successfully got dynamic token: queryString={query_string[:20]}...")
-
-    # Step 4: Prepare Payload (No Encryption Needed)
-    log_debug("Preparing final payload...")
-    
-    # Double URL-encode all fields (as done by doauthen.js)
-    user_id_encoded = urllib.parse.quote(urllib.parse.quote(PORTAL_USERNAME))
-    password_encoded = urllib.parse.quote(urllib.parse.quote(PORTAL_PASSWORD)) 
-    service_encoded = urllib.parse.quote(urllib.parse.quote(SERVICE_NAME))
-    query_string_encoded = urllib.parse.quote(urllib.parse.quote(query_string)) 
-    # We explicitly state that we are NOT sending an encrypted password
-    encrypt_encoded = urllib.parse.quote(urllib.parse.quote('false')) 
-
-    # Manually build the content string (to bypass requests' auto-encoding)
-    content_string = (
-        f"userId={user_id_encoded}"
-        f"&password={password_encoded}"
-        f"&service={service_encoded}"
-        f"&queryString={query_string_encoded}"
-        f"&operatorPwd="
-        f"&operatorUserId="
-        f"&validcode="
-        f"&passwordEncrypt={encrypt_encoded}" # This key is from AuthInterFace.js
+def current_wifi():
+    result = subprocess.run(
+        ["netsh", "wlan", "show", "interfaces"],
+        capture_output=True,
+        check=True,
+        timeout=5,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    
-    # Step 5: Send Login Request
-    try:
-        log_debug("Sending login request...")
-        r_login = session.post(
-            LOGIN_URL, 
-            data=content_string, # Send the raw string
-            timeout=5,
-            headers=POST_HEADERS # Use the special POST headers
-        )
-        
-        r_login.encoding = 'utf-8' # Force UTF-8 to fix garbled text
-        response_text = r_login.text
-        
-        log_debug(f"Server Response: {response_text}")
-        
-        if '"result":"success"' in response_text:
-            log_debug("\n🎉 Login Successful!")
-        else:
-            msg_match = re.search(r'"message":"(.*?)"', response_text)
-            if msg_match:
-                message = msg_match.group(1)
-                log_debug(f"\n❌ Login Failed: {message}")
-            else:
-                log_debug("\n❌ Login Failed: Unknown response.")
-                
-    except requests.exceptions.RequestException as e:
-        log_debug(f"Login request failed: {e}")
+    # netsh uses the active Windows OEM code page; GBK was used by the original script.
+    code_page = ctypes.windll.kernel32.GetOEMCP()
+    interfaces = parse_wifi_interfaces(result.stdout.decode(f"cp{code_page}", errors="replace"))
+    return interfaces[0] if len(interfaces) == 1 else None
 
-# --- 4. Main Execution ---
-if __name__ == "__main__":
+
+class NamedMutex:
+    """Use the global namespace to cover both SYSTEM and interactive sessions."""
+
+    def __init__(self, name=r"Global\HohaiAutoLogin"):
+        self.name = name
+        self.handle = None
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        self.kernel.CreateMutexW.restype = ctypes.c_void_p
+        self.kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        self.kernel.ReleaseMutex.argtypes = [ctypes.c_void_p]
+
+    def __enter__(self):
+        ctypes.set_last_error(0)
+        handle = self.kernel.CreateMutexW(None, True, self.name)
+        error = ctypes.get_last_error()
+        if not handle:
+            if error == 5:  # An instance owned by another account may deny access.
+                return False
+            raise OSError("Single-instance mutex unavailable")
+        if error == 183:
+            self.kernel.CloseHandle(handle)
+            return False
+        self.handle = handle
+        return True
+
+    def __exit__(self, *_):
+        if self.handle:
+            self.kernel.ReleaseMutex(self.handle)
+            self.kernel.CloseHandle(self.handle)
+            self.handle = None
+
+
+def secure_directory(path):
+    """Restrict saved account/session metadata to the running account and SYSTEM."""
+    path.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["whoami", "/user", "/fo", "csv", "/nh"],
+        capture_output=True,
+        check=True,
+        timeout=5,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    sid = re.search(rb"S-1-\d+(?:-\d+)+", result.stdout)
+    if not sid:
+        raise OSError("Current account SID unavailable")
+    grants = [f"*{sid.group().decode('ascii')}:(OI)(CI)F"]
+    if sid.group() != b"S-1-5-18":
+        grants.append("*S-1-5-18:(OI)(CI)F")
+    subprocess.run(
+        ["icacls", str(path), "/inheritance:r", "/grant:r", *grants],
+        capture_output=True,
+        check=True,
+        timeout=5,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+
+class StateStore:
+    def __init__(self, path=None):
+        if path is None:
+            local_appdata = os.environ.get("LOCALAPPDATA")
+            if not local_appdata:
+                raise OSError("LOCALAPPDATA unavailable")
+            path = Path(local_appdata) / "HohaiAutoLogin" / "session.json"
+        self.path = Path(path)
+
+    def load(self):
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def save(self, data):
+        if self.load() == data:
+            return
+        secure_directory(self.path.parent)
+        pending = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=self.path.parent, delete=False
+            ) as stream:
+                pending = Path(stream.name)
+                json.dump(data, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(pending, self.path)
+        finally:
+            if pending is not None:
+                pending.unlink(missing_ok=True)
+
+
+@dataclass(frozen=True)
+class Probe:
+    status: str
+    query: str = ""
+    user_index: str = ""
+
+
+def portal_url(value, path):
+    url = urlsplit(value)
+    # The real portal also emits /eportal/./success.jsp (RFC 3986 dot-segments).
+    if posixpath.normpath(url.path) != path or url.path.endswith("/"):
+        return False
+    if path == "/eportal/index.jsp":
+        return (
+            url.scheme == "http"
+            and url.hostname in PORTAL_HOSTS
+            and url.port in (None, 80, 8080)
+            and url.username is None
+            and url.password is None
+        )
+    return (
+        url.scheme == "http"
+        and url.hostname in PORTAL_HOSTS
+        and url.port in (None, 80)
+        and url.username is None
+        and url.password is None
+    )
+
+
+def decode_probe(response):
+    if portal_url(response.url, "/eportal/success.jsp"):
+        indices = parse_qs(urlsplit(response.url).query).get("userIndex", [])
+        return Probe("online", user_index=indices[0] if len(indices) == 1 else "")
+    candidates = [response.url]
+    candidates.extend(
+        re.findall(r"(?:top\.self\.)?location\.href\s*=\s*['\"]([^'\"]+)['\"]", response.text)
+    )
+    for candidate in candidates:
+        candidate = html.unescape(candidate)
+        if portal_url(candidate, "/eportal/index.jsp") and urlsplit(candidate).query:
+            return Probe("offline", query=urlsplit(candidate).query)
+    return Probe("unavailable")
+
+
+def login_payload(username, password, service, query):
+    values = {
+        "userId": username,
+        "password": password,
+        "service": service,
+        "queryString": query,
+        "operatorPwd": "",
+        "operatorUserId": "",
+        "validcode": "",
+        "passwordEncrypt": "false",
+    }
+    return "&".join(f"{key}={quote(quote(value))}" for key, value in values.items())
+
+
+def deadline(state, key):
+    value = state.get(key, 0)
+    return value if isinstance(value, (int, float)) and math.isfinite(value) else 0
+
+
+class CampusLogin:
+    def __init__(self, session, store, wifi=None, sleep=time.sleep, now=time.time):
+        self.session = session
+        self.session.trust_env = False
+        self.session.headers.update(GET_HEADERS)
+        self.store = store
+        self.wifi = wifi or current_wifi
+        self.sleep = sleep
+        self.now = now
+
+    def same_wifi(self, identity):
+        return identity.ssid == configs.TARGET_SSID and self.wifi() == identity
+
+    def probe(self, wait_online=False):
+        result = Probe("unavailable")
+        for attempt in range(ATTEMPTS):
+            try:
+                response = self.session.get(CHECK_URL, timeout=5, allow_redirects=True)
+                response.raise_for_status()
+                result = decode_probe(response)
+                if result.status == "online" or (result.status == "offline" and not wait_online):
+                    return result
+            except requests.RequestException:
+                pass
+            if attempt + 1 < ATTEMPTS:
+                self.sleep(attempt + 1)
+        return result
+
+    def api(self, method, data):
+        response = self.session.post(
+            API_URL + method, data=data, headers=POST_HEADERS, timeout=5, allow_redirects=False
+        )
+        response.raise_for_status()
+        value = response.json()
+        if not isinstance(value, dict):
+            raise TypeError("Unexpected portal JSON")
+        return value
+
+    def remember(self, identity, result, state):
+        if result.user_index and self.same_wifi(identity):
+            state["session"] = {
+                "userId": configs.PORTAL_USERNAME,
+                "userMac": identity.mac,
+                "userIndex": result.user_index,
+            }
+            self.store.save(state)
+
+    def authenticate(self, identity, query):
+        for attempt in range(ATTEMPTS):
+            if not self.same_wifi(identity):
+                return {"result": "network_changed"}
+            try:
+                return self.api(
+                    "login",
+                    login_payload(
+                        configs.PORTAL_USERNAME,
+                        configs.PORTAL_PASSWORD,
+                        configs.SERVICE_NAME,
+                        query,
+                    ),
+                )
+            except (requests.RequestException, ValueError, TypeError):
+                # A lost POST response can follow a successful login. Check before resubmitting.
+                result = self.probe(wait_online=True)
+                if result.status == "online":
+                    return {"result": "success"}
+            if attempt + 1 < ATTEMPTS:
+                self.sleep(attempt + 1)
+        return {"result": "unavailable"}
+
+    def recover(self, identity, state):
+        saved = state.get("session")
+        if not isinstance(saved, dict):
+            emit("limit_no_saved_session")
+            return False
+        index = saved.get("userIndex")
+        if (
+            not isinstance(index, str)
+            or not index
+            or saved.get("userId") != configs.PORTAL_USERNAME
+            or saved.get("userMac") != identity.mac
+            or not self.same_wifi(identity)
+        ):
+            emit("limit_identity_unconfirmed")
+            return False
+        if self.now() < deadline(state, "recoveryRetryAfter"):
+            emit("recovery_cooldown")
+            return False
+        try:
+            info = self.api("getOnlineUserInfo", {"userIndex": index})
+        except (requests.RequestException, ValueError, TypeError):
+            emit("session_lookup_failed")
+            return False
+        if (
+            info.get("result") not in ("success", "wait")
+            or info.get("userId") != saved["userId"]
+            or normalize_mac(info.get("userMac", "")) != saved["userMac"]
+            or info.get("userIndex") != index
+        ):
+            emit("limit_identity_unconfirmed")
+            return False
+        if not self.same_wifi(identity):
+            emit("network_changed")
+            return False
+        state["recoveryRetryAfter"] = self.now() + COOLDOWN_SECONDS
+        self.store.save(state)  # Persist before POST, including when its response is lost.
+        # Recheck after the filesystem/ACL operations as well.
+        if not self.same_wifi(identity):
+            emit("network_changed")
+            return False
+        try:
+            result = self.api("logout", {"userIndex": index})
+        except (requests.RequestException, ValueError, TypeError):
+            emit("logout_unconfirmed_cooldown")
+            return False
+        if result.get("result") != "success":
+            emit("logout_unconfirmed_cooldown")
+            return False
+        state.pop("session", None)
+        self.store.save(state)
+        emit("own_session_logout_confirmed")
+        return True
+
+    def run(self, check=False):
+        identity = self.wifi()
+        if identity is None or identity.ssid != configs.TARGET_SSID:
+            emit("other_network_or_ambiguous_wifi")
+            return 2 if check else 0
+        result = self.probe()
+        if check:
+            emit(result.status)
+            return 0 if result.status == "online" and self.same_wifi(identity) else 2
+        if not configs.PORTAL_USERNAME or not configs.PORTAL_PASSWORD:
+            emit("missing_credentials")
+            return 4
+        state = self.store.load()
+        if result.status == "online":
+            if not self.same_wifi(identity):
+                emit("network_changed")
+                return 1
+            state.pop("loginRetryAfter", None)
+            self.remember(identity, result, state)
+            emit("online")
+            return 0
+        if result.status != "offline":
+            emit("probe_unavailable")
+            return 1
+        if self.now() < deadline(state, "loginRetryAfter"):
+            emit("login_cooldown")
+            return 5
+        reply = self.authenticate(identity, result.query)
+        # Every explicit rejection starts a cooldown, including a terminal-limit response.
+        if reply.get("result") == "fail":
+            state["loginRetryAfter"] = self.now() + COOLDOWN_SECONDS
+            self.store.save(state)
+            limited = "limit_users_err" in str(reply.get("message", "")).lower()
+            if not limited or not self.recover(identity, state):
+                emit("login_rejected")
+                return 5
+            result = self.probe()
+            if result.status == "online" and self.same_wifi(identity):
+                state.pop("loginRetryAfter", None)
+                self.remember(identity, result, state)
+                emit("online")
+                return 0
+            if result.status != "offline":
+                emit("recovery_probe_unavailable")
+                return 1
+            reply = self.authenticate(identity, result.query)
+            if reply.get("result") == "fail":
+                state["loginRetryAfter"] = self.now() + COOLDOWN_SECONDS
+                self.store.save(state)
+                emit("login_rejected")
+                return 5
+        if reply.get("result") != "success":
+            emit("authentication_unconfirmed")
+            return 1
+        result = self.probe(wait_online=True)
+        if result.status != "online" or not self.same_wifi(identity):
+            emit("authentication_unconfirmed")
+            return 1
+        state.pop("loginRetryAfter", None)
+        self.remember(identity, result, state)
+        emit("online")
+        return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="Read-only connectivity check")
+    args = parser.parse_args(argv)
     try:
-        do_login()
-    except Exception as e:
-        log_debug(f"An unexpected top-level error occurred: {e}")
-    
-    if DEBUG:
-        print("\n" + "="*40)
-        log_debug(f"Debug mode: Process finished.")
-        print("="*40)
-        os.system("pause")
+        # --check avoids the mutex and all persistent state operations.
+        with requests.Session() as session:
+            if args.check:
+                return CampusLogin(session, None).run(check=True)
+            if not configs.PORTAL_USERNAME or not configs.PORTAL_PASSWORD:
+                emit("missing_credentials")
+                return 4
+            with NamedMutex() as acquired:
+                if not acquired:
+                    emit("another_instance_running")
+                    return 0
+                return CampusLogin(session, StateStore()).run()
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError, requests.RequestException):
+        emit("operation_failed")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

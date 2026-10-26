@@ -1,35 +1,24 @@
 [project]
 name = "hhu-campusnetwork-autologin"
-version = "0.1.0"
-description = "Automates login to the HHU campus network portal."
-readme = "AGENTS.md"
+version = "0.2.0"
+description = "Bounded Windows login and own-session recovery for the HHU campus portal."
+readme = "README.md"
 requires-python = ">=3.11"
-authors = [
-  { name = "Krual", email = "shaokun.tang@outlook.com" }
-]
-dependencies = [
-  "python-dotenv>=1.0",
-  "requests",
-  "pyinstaller"
-]
+authors = [{ name = "Krual", email = "shaokun.tang@outlook.com" }]
+dependencies = ["python-dotenv>=1.0", "requests>=2.32"]
 
 [dependency-groups]
-dev = [
-  "pytest>=8.3",
-  "requests-mock>=1.12"
-]
-
-[project.optional-dependencies]
-dev = [
-  "pytest>=8.3",
-  "requests-mock>=1.12"
-]
+dev = ["pytest>=8.3", "pytest-cov>=6", "requests-mock>=1.12", "ruff>=0.9", "pyinstaller>=6"]
 
 [tool.uv]
 managed = true
-package = true
+package = false
 default-groups = ["dev"]
 
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
