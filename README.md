@@ -4,12 +4,18 @@ A short-lived Windows executable for the Hohai University captive portal. The sc
 task starts it on network connection, workstation unlock, and once per minute. Each run
 finishes after bounded work; the executable does not install a Windows service.
 
-## Candidate status
+## Release v1.5.0
 
-This branch is a locally built, offline-tested candidate based on `293b24c`. The installed
-executable and the registered `HohaiAutoLogin` task have not been replaced. The candidate
-has not submitted a real login or logout. Complete the review and the controlled upgrade
-below before treating it as deployed.
+This release adds verified own-session recovery and a one-minute scheduled check.
+The Windows build passed 61 offline tests, including installer credential handling.
+The recovery implementation was installed on Windows; read-only portal checks and
+SYSTEM task execution confirmed normal online operation.
+Recovery after a real terminal-limit rejection remains to be observed during normal use.
+
+For a fresh installation, run `HohaiAutoLogin_v1.5.0_Setup.exe` and enter your campus
+account, password, and service. For an existing installation, use the controlled upgrade
+below to preserve `.env` and back up the executable and scheduled task. The installer
+offers an uninstall/reinstall flow that asks for credentials again.
 
 ## Behavior
 
@@ -65,7 +71,8 @@ DEBUG=False
 ```
 
 The executable loads `.env` beside itself. Source execution loads `.env` from the project
-root. Environment values take precedence. Empty credentials cause exit code 4; there
+root. Environment values take precedence. Values such as `${NAME}` in credentials are
+loaded literally. Empty credentials cause exit code 4; there
 are no built-in credentials. The spec includes no `.env` or application state.
 
 State is `%LOCALAPPDATA%\HohaiAutoLogin\session.json` for the **running account**.
@@ -121,6 +128,19 @@ $check.ExitCode
 `-Preview` builds a task definition in memory and prints JSON; it never registers a task.
 The one-minute trigger has no repetition end date and does not wake a sleeping machine.
 The task has a three-minute execution limit and retains SYSTEM/Highest privileges.
+
+Build the release installer with NSIS 3 from the same worktree after the executable
+build and checks above:
+
+```powershell
+& "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /INPUTCHARSET UTF8 installer.nsi
+if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
+```
+
+The installer packages `dist\candidate\HohaiAutoLogin.exe`, `.env.example`, and
+`create_task.ps1`. It writes a UTF-8 configuration from installer input passed through
+temporary child-process environment variables. Quoting preserves password characters
+such as dollar signs, quotes, backslashes, and spaces.
 
 ## Upgrade after review (administrator PowerShell)
 
