@@ -129,6 +129,7 @@ directory and its `.env`; the following commands back up code and the current ta
 Wait for any currently running task instance to finish before proceeding.
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $install = 'C:\Program Files\HohaiAutoLogin'
 $taskName = 'HohaiAutoLogin'
 if ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') { throw 'Wait for the task to finish.' }
@@ -158,6 +159,7 @@ restore the old executable and exported task, then retain or remove the new stat
 as appropriate. The previous executable ignores this candidate's state.
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $install = 'C:\Program Files\HohaiAutoLogin'
 $taskName = 'HohaiAutoLogin'
 $backup = 'C:\Program Files\HohaiAutoLogin\backup-YYYYMMDD-HHMMSS'
