@@ -1,10 +1,16 @@
 *
 !.env.example
 !.gitignore
+!AGENTS.md
 !pyproject.toml
+!uv.lock
 !src/
 !src/**/*
+!tests/
+!tests/**/*.py
 !installer.nsi
 !README.md
 !create_task.ps1
-__pycache__
+!HohaiAutoLogin.spec
+__pycache__/
+*.pyc
