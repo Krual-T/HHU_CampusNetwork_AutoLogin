@@ -15,7 +15,7 @@ def get_executable_path():
 
 BASE_DIR = get_executable_path()
 dotenv_path = Path(BASE_DIR) / ".env"
-load_dotenv(dotenv_path, override=False)
+load_dotenv(dotenv_path, override=False, interpolate=False)
 
 TARGET_SSID = os.environ.get("TARGET_SSID", "Hohai University")
 DEBUG = os.environ.get("DEBUG", "false").lower() in ("true", "1", "yes")

@@ -4,7 +4,7 @@
 Unicode true
 ; --- 1. Basic Information ---
 !define APP_NAME "HohaiAutoLogin"
-!define APP_VERSION "v1.4.1"
+!define APP_VERSION "v1.5.0"
 !define EXE_NAME "HohaiAutoLogin.exe"
 !define AutoTaskScript "create_task.ps1"
 !define ENV_TEMPLATE_NAME ".env.example"
@@ -172,13 +172,40 @@ Section "Main Application (Required)" SEC_APP
     SetOutPath $INSTDIR
     
     ; --- A. Install files ---
-    File "dist\${EXE_NAME}"
+    File "dist\candidate\${EXE_NAME}"
     File "${ENV_TEMPLATE_NAME}"
     
     ; --- B. Create .env from template and user input ---
     Rename "$INSTDIR\${ENV_TEMPLATE_NAME}" "$INSTDIR\${ENV_CONFIG_NAME}"
     
-    nsExec::ExecToStack 'powershell -Command "$$content = (Get-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\" -Encoding Utf8 -Raw); $$content = $$content.Replace(\"your_username_goes_here\", \"$USERNAME\").Replace(\"your_password_goes_here\", \"$PASSWORD\").Replace(\"your_service_name_goes_here\", \"$SERVICE_NAME\"); $$content | Set-Content -Path \"$INSTDIR\${ENV_CONFIG_NAME}\" -Encoding Utf8"'    ; --- C. Create Uninstaller and Registry ---
+    ; Pass input as data inherited only by the child process, then clear it.
+    StrCpy $R1 1
+    StrCpy $0 "$INSTDIR\${ENV_CONFIG_NAME}"
+    System::Call 'Kernel32::SetEnvironmentVariable(t "HHU_INSTALL_CONFIG", t r0)i.r1'
+    StrCmp $1 0 ConfigCleanup
+    StrCpy $0 $USERNAME
+    System::Call 'Kernel32::SetEnvironmentVariable(t "HHU_INSTALL_USERNAME", t r0)i.r1'
+    StrCmp $1 0 ConfigCleanup
+    StrCpy $0 $PASSWORD
+    System::Call 'Kernel32::SetEnvironmentVariable(t "HHU_INSTALL_PASSWORD", t r0)i.r1'
+    StrCmp $1 0 ConfigCleanup
+    StrCpy $0 $SERVICE_NAME
+    System::Call 'Kernel32::SetEnvironmentVariable(t "HHU_INSTALL_SERVICE", t r0)i.r1'
+    StrCmp $1 0 ConfigCleanup
+    nsExec::ExecToStack `powershell.exe -NoProfile -NonInteractive -Command "$$ErrorActionPreference='Stop'; $$quote=[string][char]39; $$slash=[string][char]92; $$encode={param([string]$$value) $$quote+$$value.Replace($$slash,$$slash+$$slash).Replace($$quote,$$slash+$$quote)+$$quote}; $$content=[IO.File]::ReadAllText($$env:HHU_INSTALL_CONFIG); $$content=$$content.Replace('your_username_goes_here',(& $$encode $$env:HHU_INSTALL_USERNAME)).Replace('your_password_goes_here',(& $$encode $$env:HHU_INSTALL_PASSWORD)).Replace('your_service_name_goes_here',(& $$encode $$env:HHU_INSTALL_SERVICE)); [IO.File]::WriteAllText($$env:HHU_INSTALL_CONFIG,$$content,(New-Object Text.UTF8Encoding($$false)))"`
+    Pop $R1
+    Pop $R0
+ConfigCleanup:
+    System::Call 'Kernel32::SetEnvironmentVariable(t "HHU_INSTALL_CONFIG", p 0)i'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "HHU_INSTALL_USERNAME", p 0)i'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "HHU_INSTALL_PASSWORD", p 0)i'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "HHU_INSTALL_SERVICE", p 0)i'
+    StrCmp $R1 0 ConfigWritten
+    MessageBox MB_OK|MB_ICONSTOP "Could not write the configuration file. Installation stopped." /SD IDOK
+    SetErrorLevel 1
+    Abort
+ConfigWritten:
+    ; --- C. Create Uninstaller and Registry ---
     WriteUninstaller "$INSTDIR\uninstall.exe"
     
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
